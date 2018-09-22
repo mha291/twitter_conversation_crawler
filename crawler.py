@@ -9,9 +9,11 @@ from enum import Enum
 
 import tweepy
 import urllib3
-import yaml
+import yam
 from tweepy import OAuthHandler, Stream
 from tweepy.streaming import StreamListener
+from datetime import date
+from pathlib import Path
 
 
 class TaskState(Enum):
@@ -34,19 +36,15 @@ class FollowConversationTask:
 
 
 class QueueListener(StreamListener):
-    def __init__(self, args):
+    def __init__(self, db_path, lang="ja"):
         super().__init__()
-        if args.config:
-            f = open(args.config, 'rt')
-        else:
-            f = open('config.yml', 'rt')
-        cfg = yaml.load(f)['twitter']
+        cfg = yam.get_keys()
         self.auth = OAuthHandler(cfg['consumer_key'], cfg['consumer_secret'])
         self.auth.set_access_token(cfg['access_token'],
                                    cfg['access_token_secret'])
         self.api = tweepy.API(self.auth)
-        self.db = args.db
-        self.lang = args.lang
+        self.db = db_path
+        self.lang = lang
         self.sids_to_lookup = []
         self.tasks = {}
 
@@ -167,18 +165,44 @@ class QueueListener(StreamListener):
         print('ON LIMIT:', track)
 
 
-def main():
-    # parser
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=False,
-                        help='config file path')
-    parser.add_argument('--db', type=str, required=True,
-                        help='path to sqlite3 db')
-    parser.add_argument('--lang', type=str, required=True,
-                        help='target language')
-    args = parser.parse_args()
+def make_db(db_path):
+    sql_status = """
+        create table status(
+        id integer NOT NULL,
+        text text NOT NULL,
+        in_reply_to_status_id integer default 0,
+        user_id integer NOT NULL,
+        is_quote_status integer NOT NULL,
+        created_at integer NOT NULL,
+        CONSTRAINT status_id PRIMARY KEY (id)
+        );
+        """
+    sql_conversation = """
+        create table conversation(
+        sid1 integer NOT NULL,
+        sid2 integer NOT NULL,
+        sid3 integer NOT NULL,
+        CONSTRAINT converstaion_id PRIMARY KEY (sid1, sid2, sid3)
+        );
+        """
 
-    listener = QueueListener(args)
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute(sql_status)
+    cur.execute(sql_conversation)
+    conn.commit()
+    conn.close()
+
+def main():
+    # {path}は自分の環境にあわせる
+    db_path = str(Path.home()) + "{path}/Conversation." + date.today().strftime("20%y.%m.%d") + ".db"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--new', type=int, default=-1,
+                        help='-1 indicates new database...')
+    args = parser.parse_args()
+    if args.new == -1:
+        make_db(db_path)
+    listener = QueueListener(db_path)
     stream = Stream(listener.auth, listener)
     print("Listening...\n")
     delay = 0.25
